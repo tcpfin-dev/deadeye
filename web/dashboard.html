@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deadeye — Multi-Agent Anomaly Detection</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-0:#050a0e;--bg-1:#0a1118;--bg-2:#0f1a24;--bg-3:#14222e;
+  --border:#1a2d3d;--border-bright:#254565;
+  --cyan:#00e5ff;--cyan-dim:#0099aa;--cyan-glow:rgba(0,229,255,.12);
+  --amber:#ffab00;--amber-dim:#b37800;--amber-glow:rgba(255,171,0,.1);
+  --red:#ff1744;--red-dim:#b3002d;--red-glow:rgba(255,23,68,.12);
+  --green:#00e676;--green-dim:#009e4f;--green-glow:rgba(0,230,118,.1);
+  --text-0:#e8edf2;--text-1:#9aafbe;--text-2:#5a7282;
+  --font-mono:'JetBrains Mono',monospace;--font-sans:'Outfit',sans-serif;
+  --panel-radius:3px;
+}
+html{font-size:13px;-webkit-font-smoothing:antialiased}
+body{background:var(--bg-0);color:var(--text-0);font-family:var(--font-mono);overflow:hidden;height:100vh}
+::selection{background:var(--cyan);color:var(--bg-0)}
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:var(--bg-1)}::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+
+/* BG effects */
+.bg-grid{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.025;background-image:linear-gradient(var(--cyan) 1px,transparent 1px),linear-gradient(90deg,var(--cyan) 1px,transparent 1px);background-size:60px 60px}
+.scanline{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.1;z-index:100;pointer-events:none;animation:scanmove 10s linear infinite}
+@keyframes scanmove{0%{top:0}100%{top:100vh}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes ringPulse{0%{box-shadow:0 0 0 0 rgba(255,23,68,.6)}70%{box-shadow:0 0 0 12px rgba(255,23,68,0)}100%{box-shadow:0 0 0 0 rgba(255,23,68,0)}}
+
+/* SHELL */
+.shell{position:relative;z-index:1;display:grid;grid-template-rows:48px 1fr;height:100vh;overflow:hidden}
+
+/* TOPBAR */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid var(--border);background:var(--bg-1);flex-shrink:0}
+.topbar-left{display:flex;align-items:center;gap:16px}
+.logo{font-family:var(--font-sans);font-weight:800;font-size:1.1rem;letter-spacing:4px;color:var(--cyan);text-transform:uppercase;position:relative}
+.logo::after{content:'';position:absolute;bottom:-2px;left:0;width:100%;height:1px;background:linear-gradient(90deg,var(--cyan),transparent)}
+.logo-sub{font-size:.62rem;color:var(--text-2);letter-spacing:1.5px;font-weight:300}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.status-pill{display:flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--border);border-radius:20px;font-size:.68rem;letter-spacing:.5px}
+.status-pill .dot{width:6px;height:6px;border-radius:50%}
+.status-pill.healthy .dot{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+.status-pill.alert .dot{background:var(--red);box-shadow:0 0 6px var(--red);animation:pulse 1s infinite}
+.status-pill.idle .dot{background:var(--text-2)}
+.clock{font-size:.7rem;color:var(--text-2);letter-spacing:1px}
+.conn-indicator{display:flex;align-items:center;gap:5px;font-size:.62rem;color:var(--text-2)}
+.conn-dot{width:5px;height:5px;border-radius:50%;background:var(--red)}
+.conn-dot.connected{background:var(--green);box-shadow:0 0 4px var(--green)}
+
+/* MAIN LAYOUT */
+.main{display:grid;grid-template-columns:260px 1fr 320px;overflow:hidden;height:100%}
+
+/* ── LEFT SIDEBAR ── */
+.sidebar{border-right:1px solid var(--border);background:var(--bg-1);display:flex;flex-direction:column;overflow:hidden}
+.sidebar-top{flex-shrink:0;padding:12px 14px;border-bottom:1px solid var(--border)}
+.sidebar-title{font-family:var(--font-sans);font-size:.56rem;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-2);margin-bottom:10px}
+
+/* Overview metrics */
+.ov-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:12px}
+.ov-box{background:var(--bg-2);border:1px solid var(--border);padding:7px 8px;border-radius:var(--panel-radius);text-align:center}
+.ov-val{font-family:var(--font-sans);font-size:1.15rem;font-weight:700;color:var(--cyan)}
+.ov-val.warn{color:var(--amber)}.ov-val.danger{color:var(--red)}.ov-val.good{color:var(--green)}
+.ov-label{font-size:.52rem;color:var(--text-2);letter-spacing:1px;text-transform:uppercase;margin-top:1px}
+
+/* API config */
+.api-row{display:flex;gap:5px}
+.api-input{flex:1;background:var(--bg-2);border:1px solid var(--border);border-radius:2px;padding:5px 7px;color:var(--text-0);font-family:var(--font-mono);font-size:.65rem;outline:none}
+.api-input:focus{border-color:var(--cyan-dim)}
+.api-btn{background:var(--cyan-glow);border:1px solid var(--cyan-dim);color:var(--cyan);padding:5px 9px;border-radius:2px;font-family:var(--font-mono);font-size:.6rem;cursor:pointer;letter-spacing:.5px;white-space:nowrap;transition:background .15s}
+.api-btn:hover{background:rgba(0,229,255,.2)}
+.api-hint{font-size:.56rem;color:var(--text-2);margin-top:4px}
+
+/* Node list scroll area */
+.node-list-wrap{flex:1;overflow-y:auto;padding:0 14px 12px}
+.node-group-header{font-family:var(--font-sans);font-size:.56rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-2);padding:10px 0 6px;display:flex;align-items:center;justify-content:space-between}
+.node-group-count{background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:1px 6px;font-size:.54rem;letter-spacing:.5px}
+.node-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--panel-radius);margin-bottom:4px;cursor:pointer;transition:all .18s;position:relative;overflow:hidden}
+.node-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;opacity:0;transition:opacity .2s}
+.node-item.type-maint::before{background:var(--cyan)}
+.node-item.type-power::before{background:var(--amber)}
+.node-item:hover{border-color:var(--border-bright)}
+.node-item.type-maint:hover,.node-item.type-maint.selected{border-color:var(--cyan-dim);box-shadow:0 0 12px var(--cyan-glow)}
+.node-item.type-power:hover,.node-item.type-power.selected{border-color:var(--amber-dim);box-shadow:0 0 12px var(--amber-glow)}
+.node-item.selected::before{opacity:1}
+.node-item.has-alert{border-color:var(--red-dim)!important;box-shadow:0 0 12px var(--red-glow)!important;animation:fadeIn .3s ease}
+.node-item .ni-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.65rem;font-weight:700;font-family:var(--font-sans)}
+.node-item.type-maint .ni-icon{background:var(--cyan-glow);border:1.5px solid var(--cyan-dim);color:var(--cyan)}
+.node-item.type-power .ni-icon{background:var(--amber-glow);border:1.5px solid var(--amber-dim);color:var(--amber)}
+.node-item.has-alert .ni-icon{background:var(--red-glow);border-color:var(--red);color:var(--red);animation:ringPulse 1.5s infinite}
+.node-item .ni-info{flex:1;min-width:0}
+.node-item .ni-name{font-family:var(--font-sans);font-size:.7rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node-item .ni-meta{font-size:.55rem;color:var(--text-2);margin-top:1px;display:flex;gap:8px}
+.node-item .ni-status{flex-shrink:0;font-size:.55rem;padding:2px 6px;border-radius:2px;font-weight:500}
+.ni-status.normal{color:var(--green);background:var(--green-glow)}
+.ni-status.warning{color:var(--amber);background:var(--amber-glow)}
+.ni-status.alert{color:var(--red);background:var(--red-glow)}
+.ni-status.idle{color:var(--text-2)}
+.ni-status.dead{color:#ff1744;background:var(--red-glow);font-weight:700;letter-spacing:1px}
+.node-item.is-dead{opacity:.5;border-style:dashed}
+.node-item.is-dead .ni-icon{background:rgba(255,23,68,.08)!important;border-color:var(--red-dim)!important;color:var(--red)!important}
+.node-item.is-dead .ni-name{text-decoration:line-through;color:var(--text-2)}
+.node-item .ni-remove{display:none;background:none;border:1px solid var(--red-dim);color:var(--red);padding:2px 5px;border-radius:2px;font-family:var(--font-mono);font-size:.52rem;cursor:pointer;letter-spacing:.5px;transition:all .15s;flex-shrink:0;white-space:nowrap}
+.node-item .ni-remove:hover{background:var(--red-glow);border-color:var(--red)}
+.node-item.is-dead .ni-remove{display:inline-block}
+.node-item .ni-prob{font-size:.65rem;font-weight:500;flex-shrink:0;min-width:36px;text-align:right}
+.node-item .ni-heartbeat{font-size:.48rem;color:var(--text-2);margin-top:1px}
+
+/* ── CENTER ── */
+.center{display:flex;flex-direction:column;overflow:hidden;background:var(--bg-0)}
+
+/* Node topology canvas */
+.topo-panel{flex-shrink:0;border-bottom:1px solid var(--border);position:relative;background:var(--bg-1)}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;border-bottom:1px solid var(--border);background:var(--bg-1)}
+.panel-title{font-family:var(--font-sans);font-size:.66rem;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;display:flex;align-items:center;gap:7px;color:var(--text-0)}
+.tag{font-size:.5rem;padding:2px 5px;border-radius:2px;letter-spacing:.5px;font-family:var(--font-mono)}
+.tag-cyan{background:var(--cyan-glow);color:var(--cyan);border:1px solid rgba(0,229,255,.2)}
+.tag-amber{background:var(--amber-glow);color:var(--amber);border:1px solid rgba(255,171,0,.2)}
+.tag-red{background:var(--red-glow);color:var(--red);border:1px solid rgba(255,23,68,.2)}
+.tag-green{background:var(--green-glow);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.panel-badge{font-size:.58rem;color:var(--text-2)}
+#topoCanvas{display:block;width:100%;height:200px}
+
+/* Detail panel — shown when node selected */
+.detail-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.detail-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-2);gap:10px;font-size:.72rem}
+.detail-placeholder .ph-icon{font-size:2.5rem;opacity:.2}
+.detail-placeholder .ph-hint{font-size:.6rem;opacity:.6}
+
+/* Node detail view */
+.node-detail{display:flex;flex-direction:column;height:100%;overflow:hidden;animation:fadeIn .25s ease}
+.detail-header{display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg-1);flex-shrink:0}
+.detail-back{background:none;border:1px solid var(--border);color:var(--text-2);padding:4px 8px;border-radius:2px;font-family:var(--font-mono);font-size:.6rem;cursor:pointer;transition:all .15s}
+.detail-back:hover{border-color:var(--cyan-dim);color:var(--cyan)}
+.detail-title{font-family:var(--font-sans);font-size:.85rem;font-weight:700}
+.detail-subtitle{font-size:.58rem;color:var(--text-2);margin-top:1px}
+.detail-badge{margin-left:auto;padding:3px 9px;border-radius:3px;font-size:.58rem;font-weight:600}
+.detail-body{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:140px 1fr;overflow:hidden;min-height:0}
+.detail-chart-panel{grid-column:1/3;border-bottom:1px solid var(--border);padding:8px 14px;position:relative;background:var(--bg-0);overflow:hidden;display:flex;flex-direction:column}
+.detail-chart-header{font-family:var(--font-sans);font-size:.56rem;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;display:flex;justify-content:space-between;flex-shrink:0}
+.detail-chart-header span{color:var(--text-1)}
+.detail-chart-wrap{flex:1;position:relative;min-height:0}
+.detail-feed-panel{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.detail-stats-panel{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.detail-panel-title{font-family:var(--font-sans);font-size:.54rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-2);padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-1);flex-shrink:0}
+.detail-feed-scroll{flex:1;overflow-y:auto;min-height:0}
+.feed-table{width:100%;border-collapse:collapse;font-size:.62rem}
+.feed-table th{position:sticky;top:0;background:var(--bg-1);padding:4px 6px;text-align:left;font-weight:500;color:var(--text-2);letter-spacing:1px;text-transform:uppercase;font-size:.5rem;border-bottom:1px solid var(--border);z-index:2}
+.feed-table td{padding:3px 6px;border-bottom:1px solid rgba(26,45,61,.35);white-space:nowrap}
+.feed-table tr:hover{background:rgba(0,229,255,.02)}
+.feed-table tr.row-alert{background:rgba(255,23,68,.035)}
+.feed-table tr.row-warn{background:rgba(255,171,0,.025)}
+.status-badge{display:inline-block;padding:1px 5px;border-radius:2px;font-size:.5rem;letter-spacing:.5px;font-weight:500}
+.status-badge.normal{color:var(--green);background:var(--green-glow)}
+.status-badge.warning{color:var(--amber);background:var(--amber-glow)}
+.status-badge.failure,.status-badge.attack{color:var(--red);background:var(--red-glow)}
+.detail-stats-scroll{flex:1;overflow-y:auto;padding:10px 12px;min-height:0}
+.perf-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:.64rem}
+.perf-label{color:var(--text-2);min-width:62px}.perf-val{font-weight:500;min-width:44px;text-align:right}
+.perf-bar-bg{flex:1;height:4px;background:var(--bg-0);margin:0 7px;border-radius:2px;overflow:hidden}
+.perf-bar{height:100%;border-radius:2px;transition:width .5s}
+.cm-section{margin-top:14px}
+.cm-title{font-family:var(--font-sans);font-size:.5rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-2);margin-bottom:7px}
+.confusion-grid{display:grid;grid-template-columns:auto 1fr 1fr;grid-template-rows:auto 1fr 1fr;gap:2px;font-size:.58rem;text-align:center}
+.confusion-grid .cg-corner{background:transparent}
+.confusion-grid .cg-header{background:var(--bg-2);padding:4px 5px;color:var(--text-2);font-weight:500;letter-spacing:.5px}
+.confusion-grid .cg-cell{padding:8px 5px;font-family:var(--font-sans);font-weight:700;font-size:.9rem;border-radius:2px}
+.cell-tp{background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.cell-tn{background:rgba(0,229,255,.07);color:var(--cyan);border:1px solid rgba(0,229,255,.15)}
+.cell-fp{background:rgba(255,171,0,.08);color:var(--amber);border:1px solid rgba(255,171,0,.15)}
+.cell-fn{background:rgba(255,23,68,.08);color:var(--red);border:1px solid rgba(255,23,68,.15)}
+
+/* ── RIGHT SIDEBAR ── */
+.right-sidebar{border-left:1px solid var(--border);background:var(--bg-1);display:flex;flex-direction:column;overflow:hidden}
+.rs-tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--border)}
+.rs-tab{flex:1;padding:8px 0;font-family:var(--font-sans);font-size:.58rem;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-2);background:none;border:none;cursor:pointer;transition:all .15s;position:relative}
+.rs-tab::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:transparent;transition:background .15s}
+.rs-tab.active{color:var(--cyan)}
+.rs-tab.active::after{background:var(--cyan)}
+.rs-tab:hover:not(.active){color:var(--text-1)}
+.rs-pane{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+.rs-pane.active{display:flex}
+.rs-pane-header{flex-shrink:0;padding:8px 14px;border-bottom:1px solid var(--border)}
+.rs-title{font-family:var(--font-sans);font-size:.56rem;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;display:flex;align-items:center;justify-content:space-between}
+.rs-count{color:var(--red);font-family:var(--font-mono);font-size:.72rem;font-weight:500}
+.rs-scroll{flex:1;overflow-y:auto;padding:10px 12px}
+.alert-item{padding:8px 10px;border-left:2px solid var(--red);background:var(--bg-2);margin-bottom:6px;border-radius:0 3px 3px 0;font-size:.62rem;animation:fadeIn .3s ease;cursor:default}
+.alert-item:hover{border-left-color:var(--red);background:rgba(255,23,68,.06)}
+.alert-time{color:var(--text-2);font-size:.54rem;margin-bottom:3px;display:flex;gap:6px;align-items:center}
+.alert-agent-tag{background:var(--bg-3);border:1px solid var(--border);border-radius:2px;padding:1px 5px;font-size:.5rem;color:var(--text-1)}
+.alert-body{display:flex;align-items:center;gap:6px}
+.alert-status{color:var(--red);font-weight:600}
+.alert-prob{color:var(--text-0);font-weight:500;margin-left:auto}
+.alert-node{color:var(--text-2);font-size:.56rem}
+.rs-empty{text-align:center;color:var(--text-2);font-size:.68rem;padding:30px 0;opacity:.5}
+/* ── AGENT CHAT ── */
+.chat-messages{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.chat-msg{display:flex;flex-direction:column;gap:4px;animation:fadeIn .2s ease}
+.chat-msg.user{align-items:flex-end}
+.chat-msg.assistant{align-items:flex-start}
+.chat-bubble{max-width:92%;padding:8px 11px;border-radius:3px;font-size:.66rem;line-height:1.55;word-break:break-word}
+.chat-msg.user .chat-bubble{background:var(--cyan-glow);border:1px solid rgba(0,229,255,.25);color:var(--cyan);border-radius:3px 3px 0 3px}
+.chat-msg.assistant .chat-bubble{background:var(--bg-2);border:1px solid var(--border);color:var(--text-0);border-radius:3px 3px 3px 0}
+.chat-msg.assistant .chat-bubble.streaming{border-color:var(--cyan-dim);box-shadow:0 0 8px var(--cyan-glow)}
+.chat-bubble p{margin:0 0 6px}.chat-bubble p:last-child{margin-bottom:0}
+.chat-bubble h1,.chat-bubble h2,.chat-bubble h3{font-family:var(--font-sans);font-weight:700;color:var(--cyan);margin:8px 0 4px;font-size:.75rem;letter-spacing:.5px}
+.chat-bubble h1{font-size:.8rem}
+.chat-bubble ul,.chat-bubble ol{padding-left:14px;margin:4px 0}
+.chat-bubble li{margin-bottom:2px}
+.chat-bubble code{font-family:var(--font-mono);background:var(--bg-3);border:1px solid var(--border);padding:1px 4px;border-radius:2px;font-size:.62rem;color:var(--amber)}
+.chat-bubble pre{background:var(--bg-3);border:1px solid var(--border);border-radius:3px;padding:8px 10px;overflow-x:auto;margin:6px 0}
+.chat-bubble pre code{background:none;border:none;padding:0;color:var(--text-0)}
+.chat-bubble strong{color:var(--text-0);font-weight:600}
+.chat-bubble em{color:var(--text-1);font-style:italic}
+.chat-bubble a{color:var(--cyan);text-decoration:underline;text-underline-offset:2px}
+.chat-bubble hr{border:none;border-top:1px solid var(--border);margin:8px 0}
+.chat-bubble blockquote{border-left:2px solid var(--cyan-dim);margin:4px 0;padding:3px 8px;color:var(--text-1)}
+.chat-bubble table{width:100%;border-collapse:collapse;font-size:.6rem;margin:6px 0}
+.chat-bubble th{background:var(--bg-3);padding:4px 6px;text-align:left;color:var(--text-2);font-weight:600;border:1px solid var(--border)}
+.chat-bubble td{padding:3px 6px;border:1px solid var(--border)}
+.chat-tool-event{display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-2);border:1px solid var(--border);border-radius:20px;font-size:.55rem;color:var(--text-2);align-self:flex-start;max-width:92%}
+.chat-tool-icon{font-size:.65rem}
+.chat-tool-name{color:var(--amber);font-family:var(--font-mono)}
+.chat-model-badge{font-size:.5rem;padding:2px 6px;border-radius:10px;background:var(--bg-3);border:1px solid var(--border);color:var(--text-2);align-self:flex-start;letter-spacing:.5px;text-transform:uppercase;font-family:var(--font-mono)}
+.chat-model-badge.opus{border-color:rgba(255,171,0,.3);color:var(--amber)}
+.chat-model-badge.sonnet{border-color:rgba(0,229,255,.2);color:var(--cyan-dim)}
+.chat-typing{display:flex;align-items:center;gap:4px;padding:6px 0;align-self:flex-start}
+.chat-typing span{width:5px;height:5px;border-radius:50%;background:var(--text-2);animation:typingDot 1.2s infinite}
+.chat-typing span:nth-child(2){animation-delay:.2s}
+.chat-typing span:nth-child(3){animation-delay:.4s}
+@keyframes typingDot{0%,60%,100%{opacity:.3;transform:scale(1)}30%{opacity:1;transform:scale(1.3)}}
+.chat-input-row{flex-shrink:0;padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:6px;background:var(--bg-1)}
+.chat-input{flex:1;background:var(--bg-2);border:1px solid var(--border);border-radius:2px;padding:7px 10px;color:var(--text-0);font-family:var(--font-mono);font-size:.65rem;outline:none;resize:none;min-height:34px;max-height:90px;line-height:1.4}
+.chat-input:focus{border-color:var(--cyan-dim);box-shadow:0 0 0 1px rgba(0,229,255,.08)}
+.chat-input::placeholder{color:var(--text-2)}
+.chat-send-btn{background:var(--cyan-glow);border:1px solid var(--cyan-dim);color:var(--cyan);width:34px;height:34px;border-radius:2px;font-size:.8rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;align-self:flex-end}
+.chat-send-btn:hover{background:rgba(0,229,255,.2);box-shadow:0 0 8px var(--cyan-glow)}
+.chat-send-btn:disabled{opacity:.35;cursor:not-allowed}
+.chat-send-btn.sending{animation:pulse 1s infinite}
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+<div class="scanline"></div>
+
+<div class="shell">
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div>
+        <div class="logo">Deadeye</div>
+        <div class="logo-sub">Multi-Agent Anomaly Detection System</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="conn-indicator">
+        <span class="conn-dot" id="connDot"></span>
+        <span id="connLabel">Disconnected</span>
+      </div>
+      <div class="status-pill idle" id="systemPill">
+        <span class="dot"></span><span id="systemStatus">IDLE</span>
+      </div>
+      <div class="clock" id="clock"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- ═══ LEFT SIDEBAR ═══ -->
+    <div class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-title">System Overview</div>
+        <div class="ov-grid">
+          <div class="ov-box"><div class="ov-val" id="totalReadings">0</div><div class="ov-label">Readings</div></div>
+          <div class="ov-box"><div class="ov-val warn" id="totalAlerts">0</div><div class="ov-label">Alerts</div></div>
+          <div class="ov-box"><div class="ov-val good" id="totalNodes">0</div><div class="ov-label">Nodes</div></div>
+          <div class="ov-box"><div class="ov-val" id="overallAcc">—</div><div class="ov-label">Accuracy</div></div>
+        </div>
+        <div class="sidebar-title" style="margin-bottom:6px">API</div>
+        <div class="api-row">
+          <input type="text" id="apiInput" class="api-input" value="http://localhost:5000" spellcheck="false">
+          <button id="connectBtn" class="api-btn">CONNECT</button>
+        </div>
+        <div class="api-hint">Polling every 2s</div>
+      </div>
+
+      <div class="node-list-wrap">
+        <div class="node-group-header">
+          Maintenance Agents
+          <span class="node-group-count" id="maintCount">0</span>
+        </div>
+        <div id="maintNodeList"></div>
+
+        <div class="node-group-header" style="margin-top:4px">
+          Power Grid Agents
+          <span class="node-group-count" id="powerCount">0</span>
+        </div>
+        <div id="powerNodeList"></div>
+      </div>
+    </div>
+
+    <!-- ═══ CENTER ═══ -->
+    <div class="center">
+      <!-- Node topology -->
+      <div class="topo-panel">
+        <div class="panel-header">
+          <div class="panel-title">Node Topology <span class="tag tag-cyan" id="topoTag">LIVE</span></div>
+          <div class="panel-badge" id="topoBadge">0 nodes connected</div>
+        </div>
+        <canvas id="topoCanvas"></canvas>
+      </div>
+
+      <!-- Detail area -->
+      <div class="detail-area">
+        <div class="detail-placeholder" id="detailPlaceholder">
+          <div class="ph-icon">⬡</div>
+          <div>Select a node to view details</div>
+          <div class="ph-hint">Click any node in the topology or the list on the left</div>
+        </div>
+
+        <div class="node-detail" id="nodeDetail" style="display:none">
+          <div class="detail-header">
+            <button class="detail-back" id="detailBack">← Back</button>
+            <div>
+              <div class="detail-title" id="detailTitle">—</div>
+              <div class="detail-subtitle" id="detailSubtitle">—</div>
+            </div>
+            <div class="detail-badge" id="detailBadge">—</div>
+          </div>
+          <div class="detail-body">
+            <div class="detail-chart-panel">
+              <div class="detail-chart-header">
+                Failure / Attack Probability — Live Stream
+                <span id="detailChartBadge">0 pts</span>
+              </div>
+              <div class="detail-chart-wrap"><canvas id="detailChart"></canvas></div>
+            </div>
+            <div class="detail-feed-panel">
+              <div class="detail-panel-title">Sensor Feed</div>
+              <div class="detail-feed-scroll">
+                <table class="feed-table">
+                  <thead id="detailFeedHead"></thead>
+                  <tbody id="detailFeedBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="detail-stats-panel">
+              <div class="detail-panel-title">Performance</div>
+              <div class="detail-stats-scroll">
+                <div id="detailPerf"></div>
+                <div class="cm-section">
+                  <div class="cm-title">Confusion Matrix</div>
+                  <div class="confusion-grid" id="detailCM">
+                    <div class="cg-corner"></div><div class="cg-header">Pred 0</div><div class="cg-header">Pred 1</div>
+                    <div class="cg-header">Act 0</div><div class="cg-cell cell-tn" id="d_tn">0</div><div class="cg-cell cell-fp" id="d_fp">0</div>
+                    <div class="cg-header">Act 1</div><div class="cg-cell cell-fn" id="d_fn">0</div><div class="cg-cell cell-tp" id="d_tp">0</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ RIGHT SIDEBAR ═══ -->
+    <div class="right-sidebar">
+      <div class="rs-tabs">
+        <button class="rs-tab active" id="tabAlerts" onclick="switchTab('alerts')">Alerts</button>
+        <button class="rs-tab" id="tabAgent" onclick="switchTab('agent')">Agent Chat</button>
+      </div>
+      <!-- Alerts pane -->
+      <div class="rs-pane active" id="paneAlerts">
+        <div class="rs-pane-header">
+          <div class="rs-title">Global Alerts<span class="rs-count" id="alertCount">0</span></div>
+          <div style="font-size:.56rem;color:var(--text-2)">All nodes · newest first</div>
+        </div>
+        <div class="rs-scroll" id="alertFeed">
+          <div class="rs-empty">No alerts yet</div>
+        </div>
+      </div>
+      <!-- Agent Chat pane -->
+      <div class="rs-pane" id="paneAgent">
+        <div class="chat-messages" id="chatMessages">
+          <div class="chat-msg assistant">
+            <div class="chat-bubble">
+              <p>&#128075; Hi! I&#39;m your SENTINEL investigation agent.</p>
+              <p>Ask me about system status, anomalies, sensor trends, or anything about your nodes.</p>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <textarea class="chat-input" id="chatInput" placeholder="Ask about your nodes&#8230;" rows="1"></textarea>
+          <button class="chat-send-btn" id="chatSendBtn" onclick="sendChat()" title="Send">&#9658;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<script>
+// ════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════
+let API_URL = 'http://localhost:5000';
+let polling = null, connected = false;
+let selectedNode = null;
+let detailChart = null;
+
+// Node registry — dynamically built from /api/nodes
+const nodeRegistry = {
+  maint: [],   // { id, nodeId, type, label, readings:[], stats:{}, hasAlert, lastProb, liveness, heartbeatAge }
+  power: []
+};
+let allAlerts = [];
+
+// ════════════════════════════════════════════
+//  CLOCK
+// ════════════════════════════════════════════
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toISOString().replace('T',' ').slice(0,19) + ' UTC';
+}
+setInterval(updateClock, 1000); updateClock();
+
+// ════════════════════════════════════════════
+//  TOPOLOGY CANVAS
+// ════════════════════════════════════════════
+const canvas = document.getElementById('topoCanvas');
+const ctx = canvas.getContext('2d');
+const dpr = window.devicePixelRatio || 1;
+
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 200 * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = '200px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function getNodePositions() {
+  const w = canvas.width / dpr, h = canvas.height / dpr;
+  const mNodes = nodeRegistry.maint;
+  const pNodes = nodeRegistry.power;
+  const all = [];
+
+  // Maintenance nodes: left cluster
+  const mTotal = mNodes.length;
+  mNodes.forEach((n, i) => {
+    if (mTotal === 1) {
+      all.push({ ...n, x: w * 0.28, y: h * 0.5 });
+    } else {
+      const angle = (-Math.PI/3) + (i / (mTotal-1)) * (2*Math.PI/3);
+      const cx = w * 0.28, cy = h * 0.5, r = Math.min(h*0.32, 70);
+      all.push({ ...n, x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+    }
+  });
+
+  // Power nodes: right cluster
+  const pTotal = pNodes.length;
+  pNodes.forEach((n, i) => {
+    if (pTotal === 1) {
+      all.push({ ...n, x: w * 0.72, y: h * 0.5 });
+    } else {
+      const angle = (-Math.PI/3) + (i / (pTotal-1)) * (2*Math.PI/3);
+      const cx = w * 0.72, cy = h * 0.5, r = Math.min(h*0.32, 70);
+      all.push({ ...n, x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+    }
+  });
+
+  return all;
+}
+
+let topoPositions = [];
+let topoHover = null;
+let pulsePhase = 0;
+
+function drawTopo() {
+  const w = canvas.width / dpr, h = canvas.height / dpr;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#050a0e';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(0,229,255,0.03)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+  for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+
+  topoPositions = getNodePositions();
+  const maint = topoPositions.filter(n => n.type === 'maint');
+  const power = topoPositions.filter(n => n.type === 'power');
+
+  // Cross-links
+  if (maint.length && power.length) {
+    const mCx = maint.reduce((s,n)=>s+n.x,0)/maint.length;
+    const mCy = maint.reduce((s,n)=>s+n.y,0)/maint.length;
+    const pCx = power.reduce((s,n)=>s+n.x,0)/power.length;
+    const pCy = power.reduce((s,n)=>s+n.y,0)/power.length;
+
+    const grad = ctx.createLinearGradient(mCx, mCy, pCx, pCy);
+    grad.addColorStop(0, 'rgba(0,229,255,0.15)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.06)');
+    grad.addColorStop(1, 'rgba(255,171,0,0.15)');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 6]);
+    ctx.beginPath(); ctx.moveTo(mCx, mCy); ctx.lineTo(pCx, pCy); ctx.stroke();
+    ctx.setLineDash([]);
+
+    maint.forEach(mn => {
+      power.forEach(pn => {
+        const isAlert = mn.hasAlert || pn.hasAlert;
+        ctx.strokeStyle = isAlert ? 'rgba(255,23,68,0.18)' : 'rgba(0,229,255,0.06)';
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([2, 8]);
+        ctx.beginPath(); ctx.moveTo(mn.x, mn.y); ctx.lineTo(pn.x, pn.y); ctx.stroke();
+        ctx.setLineDash([]);
+      });
+    });
+  }
+
+  // Intra-group links
+  [maint, power].forEach(group => {
+    for (let i = 0; i < group.length - 1; i++) {
+      const a = group[i], b = group[i+1];
+      ctx.strokeStyle = a.type === 'maint' ? 'rgba(0,229,255,0.12)' : 'rgba(255,171,0,0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 5]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  });
+
+  // Group labels
+  if (maint.length) {
+    const cx = maint.reduce((s,n)=>s+n.x,0)/maint.length;
+    ctx.font = '600 9px Outfit, sans-serif';
+    ctx.fillStyle = 'rgba(0,229,255,0.35)';
+    ctx.textAlign = 'center';
+    ctx.fillText('MAINTENANCE', cx, 14);
+  }
+  if (power.length) {
+    const cx = power.reduce((s,n)=>s+n.x,0)/power.length;
+    ctx.font = '600 9px Outfit, sans-serif';
+    ctx.fillStyle = 'rgba(255,171,0,0.35)';
+    ctx.textAlign = 'center';
+    ctx.fillText('POWER GRID', cx, 14);
+  }
+
+  // Nodes
+  topoPositions.forEach(n => {
+    const isCyan = n.type === 'maint';
+    const baseColor = isCyan ? '#00e5ff' : '#ffab00';
+    const alertColor = '#ff1744';
+    const deadColor = '#5a7282';
+    const isSelected = selectedNode && selectedNode.id === n.id;
+    const isHovered = topoHover === n.id;
+    const isAlert = n.hasAlert;
+    const isDead = n.liveness === 'dead';
+    const color = isDead ? deadColor : (isAlert ? alertColor : baseColor);
+
+    if (isAlert && !isDead) {
+      const pulseR = 20 + Math.sin(pulsePhase) * 8;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, pulseR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,23,68,${0.3 + 0.2 * Math.sin(pulsePhase)})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    if (isSelected) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, 18, 0, Math.PI * 2);
+      ctx.strokeStyle = isCyan ? 'rgba(0,229,255,0.5)' : 'rgba(255,171,0,0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    const glowSize = isHovered || isSelected ? 16 : 10;
+    const grd = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowSize);
+    grd.addColorStop(0, isDead ? 'rgba(90,114,130,0.15)' : (isAlert ? 'rgba(255,23,68,0.3)' : (isCyan ? 'rgba(0,229,255,0.2)' : 'rgba(255,171,0,0.2)')));
+    grd.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
+    ctx.fillStyle = grd;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 13, 0, Math.PI * 2);
+    ctx.strokeStyle = isDead ? 'rgba(90,114,130,0.3)' : (isAlert ? alertColor : (isCyan ? 'rgba(0,229,255,0.4)' : 'rgba(255,171,0,0.4)'));
+    ctx.lineWidth = 1.5;
+    if (isDead) { ctx.setLineDash([3, 3]); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    ctx.font = `500 ${isSelected || isHovered ? 10 : 9}px JetBrains Mono, monospace`;
+    ctx.fillStyle = isDead ? deadColor : (isAlert ? alertColor : (isCyan ? '#00e5ff' : '#ffab00'));
+    ctx.textAlign = 'center';
+    ctx.fillText(n.label, n.x, n.y + 26);
+
+    if (isDead) {
+      ctx.font = '700 7px JetBrains Mono, monospace';
+      ctx.fillStyle = '#ff1744';
+      ctx.fillText('DEAD', n.x, n.y + 37);
+    } else if (n.lastProb !== undefined) {
+      const probText = (n.lastProb * 100).toFixed(0) + '%';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.fillStyle = n.lastProb >= 0.5 ? '#ff1744' : (n.lastProb >= 0.3 ? '#ffab00' : 'rgba(0,229,255,0.7)');
+      ctx.fillText(probText, n.x, n.y + 37);
+    }
+  });
+
+  if (!topoPositions.length) {
+    ctx.font = '12px JetBrains Mono, monospace';
+    ctx.fillStyle = 'rgba(90,114,130,0.5)';
+    ctx.textAlign = 'center';
+    ctx.fillText('Waiting for agents to connect…', (canvas.width/dpr)/2, (canvas.height/dpr)/2);
+  }
+
+  pulsePhase += 0.06;
+  requestAnimationFrame(drawTopo);
+}
+
+// Canvas interactions
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  topoHover = null;
+  for (const n of topoPositions) {
+    if (Math.hypot(n.x - mx, n.y - my) < 16) { topoHover = n.id; break; }
+  }
+  canvas.style.cursor = topoHover ? 'pointer' : 'default';
+});
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  for (const n of topoPositions) {
+    if (Math.hypot(n.x - mx, n.y - my) < 16) { selectNode(n); return; }
+  }
+});
+
+canvas.addEventListener('mouseleave', () => { topoHover = null; canvas.style.cursor = 'default'; });
+
+// ════════════════════════════════════════════
+//  NODE SELECTION + DETAIL VIEW
+// ════════════════════════════════════════════
+function selectNode(node) {
+  selectedNode = node;
+  highlightSidebarItem(node.id);
+  renderDetailView(node);
+}
+
+function highlightSidebarItem(nodeId) {
+  document.querySelectorAll('.node-item').forEach(el => el.classList.remove('selected'));
+  const el = document.querySelector(`.node-item[data-id="${nodeId}"]`);
+  if (el) el.classList.add('selected');
+}
+
+function renderDetailView(node) {
+  document.getElementById('detailPlaceholder').style.display = 'none';
+  document.getElementById('nodeDetail').style.display = 'flex';
+
+  const isMaint = node.type === 'maint';
+  const color = isMaint ? '#00e5ff' : '#ffab00';
+  const accentClass = isMaint ? 'tag-cyan' : 'tag-amber';
+
+  document.getElementById('detailTitle').textContent = node.label;
+  document.getElementById('detailSubtitle').textContent =
+    isMaint ? `Predictive Maintenance · ${node.nodeId}` : `Power Grid · ${node.nodeId}`;
+
+  const badge = document.getElementById('detailBadge');
+  badge.className = `detail-badge ${node.hasAlert ? 'tag-red' : accentClass}`;
+  badge.textContent = node.hasAlert ? 'ALERT' : (isMaint ? 'MAINTENANCE' : 'POWER GRID');
+
+  // Chart
+  if (detailChart) { detailChart.destroy(); detailChart = null; }
+  const chartCanvas = document.getElementById('detailChart');
+  detailChart = new Chart(chartCanvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          data: [], borderColor: color,
+          backgroundColor: isMaint ? 'rgba(0,229,255,0.07)' : 'rgba(255,171,0,0.07)',
+          borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3
+        },
+        {
+          data: [], borderColor: 'rgba(255,23,68,0.5)', borderWidth: 1,
+          borderDash: [4,4], pointRadius: 0, fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      devicePixelRatio: window.devicePixelRatio || 2,
+      animation: { duration: 200 },
+      plugins: { legend: { display: false },
+        tooltip: { backgroundColor: '#0f1a24', titleColor: '#9aafbe', bodyColor: '#e8edf2',
+          borderColor: '#254565', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 8 },
+          bodyFont: { family: 'JetBrains Mono', size: 10 },
+          callbacks: { label: c => c.datasetIndex === 0 ? `Prob: ${(c.parsed.y*100).toFixed(1)}%` : 'Threshold: 50%' }
+        }
+      },
+      scales: {
+        x: { display: true, grid: { color: 'rgba(26,45,61,.5)', lineWidth: .5 },
+          ticks: { color: '#5a7282', font: { family: 'JetBrains Mono', size: 7 }, maxTicksLimit: 8, maxRotation: 0 }},
+        y: { display: true, min: 0, max: 1, grid: { color: 'rgba(26,45,61,.5)', lineWidth: .5 },
+          ticks: { color: '#5a7282', font: { family: 'JetBrains Mono', size: 7 }, callback: v => (v*100)+'%', stepSize: 0.25 }}
+      }
+    }
+  });
+
+  updateDetailView(node);
+}
+
+function updateDetailView(node) {
+  if (!selectedNode || selectedNode.id !== node.id) return;
+
+  const readings = node.readings || [];
+  const stats = node.stats || {};
+  const isMaint = node.type === 'maint';
+
+  // Badge
+  const badge = document.getElementById('detailBadge');
+  badge.className = `detail-badge ${node.hasAlert ? 'tag-red' : (isMaint ? 'tag-cyan' : 'tag-amber')}`;
+  badge.textContent = node.hasAlert ? 'ALERT' : (isMaint ? 'MAINTENANCE' : 'POWER GRID');
+
+  // Chart
+  if (detailChart) {
+    const pts = readings.slice(-100);
+    detailChart.data.labels = pts.map(r => (r.timestamp || '').slice(-8));
+    detailChart.data.datasets[0].data = pts.map(r => r.probability || 0);
+    detailChart.data.datasets[1].data = pts.map(() => 0.5);
+    detailChart.update('none');
+    document.getElementById('detailChartBadge').textContent = readings.length + ' pts';
+  }
+
+  // Feed table
+  const headers = isMaint
+    ? ['Time', 'Wear', 'Torque', 'Power', 'Prob', 'Status']
+    : ['Time', 'R1:VH', 'R2:VH', 'R3:VH', 'R4:VH', 'Prob', 'Status'];
+  const keys = isMaint
+    ? ['timestamp','tool_wear','torque','power_w','probability','status']
+    : ['timestamp','r1_vh','r2_vh','r3_vh','r4_vh','probability','status'];
+
+  document.getElementById('detailFeedHead').innerHTML =
+    '<tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
+
+  const rows = [...readings].reverse().slice(0, 100);
+  if (rows.length) {
+    document.getElementById('detailFeedBody').innerHTML = rows.map(r => {
+      const cls = (r.status === 'FAILURE' || r.status === 'ATTACK') ? 'row-alert'
+        : r.status === 'WARNING' ? 'row-warn' : '';
+      return `<tr class="${cls}">${keys.map(k => {
+        const v = r[k];
+        if (k === 'probability') return `<td style="font-weight:500;color:${v>=.5?'var(--red)':v>=.3?'var(--amber)':'var(--green)'}">${(v*100).toFixed(1)}%</td>`;
+        if (k === 'status') {
+          const sc = v === 'normal' ? 'normal' : v === 'WARNING' ? 'warning' : (v==='FAILURE'?'failure':'attack');
+          return `<td><span class="status-badge ${sc}">${v}</span></td>`;
+        }
+        if (k === 'timestamp') return `<td>${(v||'—').slice(-8)}</td>`;
+        return `<td>${typeof v === 'number' ? v.toFixed(2) : (v ?? '—')}</td>`;
+      }).join('')}</tr>`;
+    }).join('');
+  } else {
+    document.getElementById('detailFeedBody').innerHTML =
+      `<tr><td colspan="${headers.length}" style="text-align:center;color:var(--text-2);padding:20px">No readings yet</td></tr>`;
+  }
+
+  // Perf bars
+  const metrics = [
+    { l: 'Accuracy', v: stats.accuracy || 0, c: 'var(--cyan)' },
+    { l: 'Precision', v: stats.precision || 0, c: 'var(--green)' },
+    { l: 'Recall', v: stats.recall || 0, c: 'var(--amber)' },
+    { l: 'F1 Score', v: stats.f1_score || 0, c: 'var(--cyan)' }
+  ];
+  document.getElementById('detailPerf').innerHTML = metrics.map(m =>
+    `<div class="perf-row">
+      <span class="perf-label">${m.l}</span>
+      <div class="perf-bar-bg"><div class="perf-bar" style="width:${m.v*100}%;background:${m.c}"></div></div>
+      <span class="perf-val" style="color:${m.c}">${(m.v*100).toFixed(1)}%</span>
+    </div>`
+  ).join('');
+
+  // Confusion matrix
+  const cm = stats.confusion_matrix || {};
+  document.getElementById('d_tp').textContent = cm.tp || 0;
+  document.getElementById('d_fp').textContent = cm.fp || 0;
+  document.getElementById('d_tn').textContent = cm.tn || 0;
+  document.getElementById('d_fn').textContent = cm.fn || 0;
+}
+
+document.getElementById('detailBack').addEventListener('click', () => {
+  selectedNode = null;
+  document.querySelectorAll('.node-item').forEach(el => el.classList.remove('selected'));
+  document.getElementById('nodeDetail').style.display = 'none';
+  document.getElementById('detailPlaceholder').style.display = 'flex';
+});
+
+// ════════════════════════════════════════════
+//  SIDEBAR NODE LIST
+// ════════════════════════════════════════════
+function renderNodeList(type) {
+  const listEl = document.getElementById(type === 'maint' ? 'maintNodeList' : 'powerNodeList');
+  const countEl = document.getElementById(type === 'maint' ? 'maintCount' : 'powerCount');
+  const nodes = nodeRegistry[type];
+
+  countEl.textContent = nodes.length;
+
+  if (!nodes.length) {
+    listEl.innerHTML = `<div style="font-size:.6rem;color:var(--text-2);text-align:center;padding:10px 0;opacity:.5">No agents connected</div>`;
+    return;
+  }
+
+  listEl.innerHTML = nodes.map(n => {
+    const lastReading = n.readings[n.readings.length - 1];
+    const prob = lastReading?.probability ?? n.lastProb;
+    const probColor = prob >= 0.5 ? 'var(--red)' : prob >= 0.3 ? 'var(--amber)' : 'var(--green)';
+    const isDead = n.liveness === 'dead';
+    const status = isDead ? 'DEAD' : (lastReading?.status || (n.liveness === 'idle' ? 'idle' : 'idle'));
+    const statusClass = isDead ? 'dead'
+      : status === 'FAILURE' || status === 'ATTACK' ? 'alert'
+      : status === 'WARNING' ? 'warning' : status === 'normal' ? 'normal' : 'idle';
+    const isSelected = selectedNode && selectedNode.id === n.id;
+    const icon = type === 'maint' ? 'M' : 'P';
+    const idx = n.nodeId.replace('node_','#');
+    const agentType = type === 'maint' ? 'maintenance' : 'power';
+    const hbAge = n.heartbeatAge ? `${Math.round(n.heartbeatAge)}s ago` : '';
+
+    return `<div class="node-item type-${type} ${n.hasAlert?'has-alert':''} ${isSelected?'selected':''} ${isDead?'is-dead':''}" data-id="${n.id}" onclick="handleNodeItemClick('${n.id}')">
+      <div class="ni-icon">${icon}${idx}</div>
+      <div class="ni-info">
+        <div class="ni-name">${n.label}</div>
+        <div class="ni-meta">
+          <span>${n.stats?.total_readings?.toLocaleString() || 0} rdgs</span>
+          <span>${n.stats?.alerts_fired || 0} alerts</span>
+        </div>
+        ${isDead ? `<div class="ni-heartbeat">Last heartbeat: ${hbAge}</div>` : ''}
+      </div>
+      ${!isDead && prob !== undefined ? `<div class="ni-prob" style="color:${probColor}">${(prob*100).toFixed(0)}%</div>` : ''}
+      <div class="ni-status ${statusClass}">${isDead ? 'DEAD' : (status === 'idle' ? 'IDLE' : status)}</div>
+      ${isDead ? `<button class="ni-remove" onclick="event.stopPropagation(); removeNode('${agentType}','${n.nodeId}')" title="Remove dead node">✕</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function handleNodeItemClick(nodeId) {
+  const all = [...nodeRegistry.maint, ...nodeRegistry.power];
+  const node = all.find(n => n.id === nodeId);
+  if (node) selectNode(node);
+}
+
+async function removeNode(agentType, nodeId) {
+  try {
+    const resp = await fetch(`${API_URL}/api/nodes/${agentType}/${nodeId}`, { method: 'DELETE' });
+    if (resp.ok) {
+      // If the deleted node was selected, deselect it
+      if (selectedNode && selectedNode.nodeId === nodeId) {
+        selectedNode = null;
+        document.getElementById('nodeDetail').style.display = 'none';
+        document.getElementById('detailPlaceholder').style.display = 'flex';
+      }
+      // Immediate refresh
+      poll();
+    }
+  } catch(e) { /* silent */ }
+}
+
+// ════════════════════════════════════════════
+//  GLOBAL ALERTS PANEL
+// ════════════════════════════════════════════
+function renderAlerts() {
+  const el = document.getElementById('alertFeed');
+  document.getElementById('alertCount').textContent = allAlerts.length;
+
+  if (!allAlerts.length) {
+    el.innerHTML = '<div class="rs-empty">No alerts yet</div>';
+    return;
+  }
+
+  el.innerHTML = [...allAlerts].reverse().slice(0, 60).map(a =>
+    `<div class="alert-item">
+      <div class="alert-time">
+        <span>${(a.timestamp||'—').slice(-8)}</span>
+        <span class="alert-agent-tag">${a.node_id || 'node_1'}</span>
+      </div>
+      <div class="alert-body">
+        <span class="alert-status">⚠ ${a.status}</span>
+        <span class="alert-node">${a._label || ''}</span>
+        <span class="alert-prob">${((a.probability||0)*100).toFixed(1)}%</span>
+      </div>
+    </div>`
+  ).join('');
+}
+
+// ════════════════════════════════════════════
+//  API POLLING — MULTI-NODE AWARE
+// ════════════════════════════════════════════
+function setConn(ok) {
+  connected = ok;
+  document.getElementById('connDot').className = 'conn-dot' + (ok ? ' connected' : '');
+  document.getElementById('connLabel').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+async function fJ(path) {
+  const r = await fetch(API_URL + path);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function poll() {
+  try {
+    // 1. Get overview for system status
+    const ov = await fJ('/api/overview');
+    setConn(true);
+
+    // System pill
+    const pill = document.getElementById('systemPill');
+    pill.className = 'status-pill ' + (ov.system_status === 'ALERT' ? 'alert' : ov.system_status === 'HEALTHY' ? 'healthy' : 'idle');
+    document.getElementById('systemStatus').textContent = ov.system_status;
+
+    // 2. Get all nodes from the /api/nodes endpoint
+    const nodesData = await fJ('/api/nodes');
+
+    // Rebuild node registries from API response
+    nodeRegistry.maint = [];
+    nodeRegistry.power = [];
+
+    // Process maintenance nodes
+    for (const nd of (nodesData.maintenance || [])) {
+      const nid = nd.node_id;
+      const internalId = `maint_${nid}`;
+      const node = {
+        id: internalId,
+        nodeId: nid,
+        type: 'maint',
+        label: `Maint ${nid.replace('node_','#')}`,
+        readings: [],
+        stats: nd.stats || {},
+        hasAlert: false,
+        lastProb: nd.last_reading?.probability,
+        liveness: nd.liveness || 'idle',
+        heartbeatAge: nd.heartbeat_age_s || 0,
+      };
+      // Check alert state from last reading
+      const lastStatus = nd.last_reading?.status;
+      node.hasAlert = lastStatus === 'FAILURE' || lastStatus === 'WARNING';
+      nodeRegistry.maint.push(node);
+    }
+
+    // Process power nodes
+    for (const nd of (nodesData.power || [])) {
+      const nid = nd.node_id;
+      const internalId = `power_${nid}`;
+      const node = {
+        id: internalId,
+        nodeId: nid,
+        type: 'power',
+        label: `Power ${nid.replace('node_','#')}`,
+        readings: [],
+        stats: nd.stats || {},
+        hasAlert: false,
+        lastProb: nd.last_reading?.probability,
+        liveness: nd.liveness || 'idle',
+        heartbeatAge: nd.heartbeat_age_s || 0,
+      };
+      const lastStatus = nd.last_reading?.status;
+      node.hasAlert = lastStatus === 'ATTACK' || lastStatus === 'WARNING';
+      nodeRegistry.power.push(node);
+    }
+
+    // 3. Fetch detailed readings for each node (for the selected node especially)
+    const allNodes = [...nodeRegistry.maint, ...nodeRegistry.power];
+
+    // Fetch readings for each node in parallel
+    const readingPromises = allNodes.map(async node => {
+      const agentType = node.type === 'maint' ? 'maintenance' : 'power';
+      try {
+        const data = await fJ(`/api/${agentType}/latest?n=200&node_id=${node.nodeId}`);
+        node.readings = data.readings || [];
+        if (node.readings.length) {
+          node.lastProb = node.readings[node.readings.length - 1].probability;
+        }
+      } catch(e) { /* silent */ }
+    });
+    await Promise.all(readingPromises);
+
+    // 4. Fetch all alerts
+    const [mA, pA] = await Promise.all([
+      fJ('/api/maintenance/alerts?n=100'),
+      fJ('/api/power/alerts?n=100')
+    ]);
+    const mAlerts = (mA.alerts || []).map(a => ({ ...a, _label: 'Maintenance' }));
+    const pAlerts = (pA.alerts || []).map(a => ({ ...a, _label: 'Power Grid' }));
+    allAlerts = [...mAlerts, ...pAlerts].sort((a, b) => (a.timestamp||'').localeCompare(b.timestamp||''));
+
+    // 5. Overview panel numbers
+    const mStats = ov.agents.maintenance;
+    const pStats = ov.agents.power;
+    const tr = (mStats.total_readings || 0) + (pStats.total_readings || 0);
+    document.getElementById('totalReadings').textContent = tr.toLocaleString();
+    document.getElementById('totalAlerts').textContent = ov.total_alerts;
+    document.getElementById('totalAlerts').className = 'ov-val ' + (ov.total_alerts > 0 ? 'danger' : 'warn');
+    document.getElementById('totalNodes').textContent = ov.total_nodes || (nodeRegistry.maint.length + nodeRegistry.power.length);
+    if (tr > 0) {
+      const acc = ((mStats.accuracy||0) * (mStats.total_readings||0) + (pStats.accuracy||0) * (pStats.total_readings||0)) / tr;
+      document.getElementById('overallAcc').textContent = (acc * 100).toFixed(1) + '%';
+    }
+
+    // Topo badge
+    const nc = nodeRegistry.maint.length + nodeRegistry.power.length;
+    const deadCount = [...nodeRegistry.maint, ...nodeRegistry.power].filter(n => n.liveness === 'dead').length;
+    const aliveCount = nc - deadCount;
+    document.getElementById('topoBadge').textContent = deadCount > 0
+      ? `${aliveCount} alive · ${deadCount} dead`
+      : nc + ' node' + (nc !== 1 ? 's' : '') + ' connected';
+
+    // Render sidebars
+    renderNodeList('maint');
+    renderNodeList('power');
+    renderAlerts();
+
+    // Update detail if selected
+    if (selectedNode) {
+      const updated = allNodes.find(n => n.id === selectedNode.id);
+      if (updated) {
+        selectedNode = updated;
+        updateDetailView(updated);
+      }
+    }
+
+  } catch (e) {
+    setConn(false);
+  }
+}
+
+document.getElementById('connectBtn').addEventListener('click', () => {
+  API_URL = document.getElementById('apiInput').value.replace(/\/+$/, '');
+  if (polling) clearInterval(polling);
+  poll();
+  polling = setInterval(poll, 2000);
+});
+
+// ════════════════════════════════════════════
+//  TAB SWITCHER
+// ════════════════════════════════════════════
+function switchTab(tab) {
+  document.getElementById('tabAlerts').classList.toggle('active', tab === 'alerts');
+  document.getElementById('tabAgent').classList.toggle('active', tab === 'agent');
+  document.getElementById('paneAlerts').classList.toggle('active', tab === 'alerts');
+  document.getElementById('paneAgent').classList.toggle('active', tab === 'agent');
+  if (tab === 'agent') {
+    setTimeout(scrollChatToBottom, 50);
+    document.getElementById('chatInput').focus();
+  }
+}
+
+// ════════════════════════════════════════════
+//  AGENT CHAT
+// ════════════════════════════════════════════
+const chatThreadId = 'dashboard-' + Math.random().toString(36).slice(2, 10);
+let chatStreaming = false;
+
+if (typeof marked !== 'undefined') marked.setOptions({ breaks: true, gfm: true });
+
+function renderMarkdown(text) {
+  if (typeof marked === 'undefined') return escapeHtml(text).replace(/\n/g, '<br>');
+  try { return marked.parse(text); } catch(e) { return escapeHtml(text); }
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function scrollChatToBottom() {
+  const el = document.getElementById('chatMessages');
+  el.scrollTop = el.scrollHeight;
+}
+
+function appendUserMsg(text) {
+  const el = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg user';
+  div.innerHTML = `<div class="chat-bubble">${escapeHtml(text)}</div>`;
+  el.appendChild(div);
+  scrollChatToBottom();
+}
+
+function appendToolEvent(tool, type) {
+  const el = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  const icon = type === 'call' ? '&#9883;' : '&#10003;';
+  const label = type === 'call' ? 'Calling' : 'Result';
+  div.innerHTML = `<div class="chat-tool-event"><span class="chat-tool-icon">${icon}</span><span>${label}:</span><span class="chat-tool-name">${escapeHtml(tool)}</span></div>`;
+  el.appendChild(div);
+  scrollChatToBottom();
+}
+
+function appendTypingIndicator() {
+  const el = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  div.id = 'chatTyping';
+  div.innerHTML = `<div class="chat-typing"><span></span><span></span><span></span></div>`;
+  el.appendChild(div);
+  scrollChatToBottom();
+}
+function removeTypingIndicator() {
+  const el = document.getElementById('chatTyping');
+  if (el) el.remove();
+}
+
+// ── Streaming bubble — each response creates its own, refs cleared on finalise ──
+let _streamBubble = null;   // the inner .chat-bubble div
+let _streamMsg = null;      // the outer .chat-msg div
+let _streamText = '';       // accumulated raw markdown
+
+function createStreamingBubble() {
+  const container = document.getElementById('chatMessages');
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'chat-msg assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble streaming';
+  msgDiv.appendChild(bubble);
+  container.appendChild(msgDiv);
+  _streamMsg = msgDiv;
+  _streamBubble = bubble;
+  _streamText = '';
+  scrollChatToBottom();
+}
+
+function appendToken(token) {
+  if (!_streamBubble) createStreamingBubble();
+  _streamText += token;
+  _streamBubble.innerHTML = renderMarkdown(_streamText);
+  scrollChatToBottom();
+}
+
+function finaliseStream(modelUsed) {
+  if (_streamBubble) {
+    _streamBubble.classList.remove('streaming');
+    _streamBubble.innerHTML = renderMarkdown(_streamText);
+  }
+  if (modelUsed && _streamMsg) {
+    const badge = document.createElement('div');
+    const cls = modelUsed.toLowerCase().includes('opus') ? 'opus' : 'sonnet';
+    badge.className = `chat-model-badge ${cls}`;
+    badge.textContent = cls;
+    _streamMsg.appendChild(badge);
+  }
+  // Clear ALL refs — next message must start from scratch
+  _streamBubble = null;
+  _streamMsg = null;
+  _streamText = '';
+  scrollChatToBottom();
+}
+
+function appendErrorBubble(msg) {
+  const el = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  div.innerHTML = `<div class="chat-bubble" style="border-color:var(--red-dim);color:var(--red)">&#9888; ${escapeHtml(msg)}</div>`;
+  el.appendChild(div);
+  scrollChatToBottom();
+}
+
+async function sendChat() {
+  if (chatStreaming) return;
+  const input = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  const message = input.value.trim();
+  if (!message) return;
+
+  switchTab('agent');
+  input.value = '';
+  input.style.height = 'auto';
+  appendUserMsg(message);
+  appendTypingIndicator();
+
+  chatStreaming = true;
+  btn.disabled = true;
+  btn.classList.add('sending');
+
+  let modelUsed = null;
+  let bubbleStarted = false;
+
+  try {
+    const res = await fetch(`${API_URL}/api/agent/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ message, thread_id: chatThreadId })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      const lines = buf.split('\n');
+      buf = lines.pop();
+
+      let eventType = null;
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          let payload;
+          try { payload = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+          if (eventType === 'token') {
+            if (!bubbleStarted) { removeTypingIndicator(); createStreamingBubble(); bubbleStarted = true; }
+            appendToken(payload.content || '');
+          } else if (eventType === 'tool_call') {
+            if (!bubbleStarted) removeTypingIndicator();
+            appendToolEvent(payload.tool || 'unknown', 'call');
+          } else if (eventType === 'tool_result') {
+            appendToolEvent(payload.tool || 'unknown', 'result');
+            if (!bubbleStarted) appendTypingIndicator();
+          } else if (eventType === 'model_used') {
+            modelUsed = payload.model || null;
+          } else if (eventType === 'done') {
+            removeTypingIndicator();
+            finaliseStream(modelUsed);
+            bubbleStarted = false;
+          } else if (eventType === 'error') {
+            removeTypingIndicator();
+            if (bubbleStarted) { finaliseStream(null); bubbleStarted = false; }
+            appendErrorBubble(payload.error || 'Unknown error');
+          }
+          eventType = null;
+        }
+      }
+    }
+  } catch (err) {
+    removeTypingIndicator();
+    if (bubbleStarted) { finaliseStream(null); bubbleStarted = false; }
+    appendErrorBubble('Could not reach agent. Is the API server running?');
+  } finally {
+    chatStreaming = false;
+    btn.disabled = false;
+    btn.classList.remove('sending');
+  }
+}
+
+document.getElementById('chatInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 90) + 'px';
+});
+document.getElementById('chatInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+// ════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+drawTopo();
+
+setTimeout(() => {
+  poll();
+  polling = setInterval(poll, 2000);
+}, 400);
+</script>
+</body>
+</html>
