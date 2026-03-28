@@ -21,6 +21,9 @@ build/
 .coverage
 htmlcov/
 
+# ML Models (too large for github)
+*.pkl
+
 # Environments / Secrets
 .env
 .flaskenv

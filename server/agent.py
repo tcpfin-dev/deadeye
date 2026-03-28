@@ -19,7 +19,7 @@ Usage (standalone):
     python agent.py --api-url http://localhost:8080
 
 Requirements:
-    pip install langchain langchain-openrouter langgraph httpx
+    pip install langchain langchain-openai langgraph httpx
 """
 
 import os
@@ -29,10 +29,10 @@ from typing import Callable, Generator
 
 import httpx
 from langchain.tools import tool
-from langchain.agents import create_agent, AgentState
+from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse
 from langchain.messages import AIMessageChunk, AIMessage, ToolMessage as LCToolMessage
-from langchain_openrouter import ChatOpenRouter
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 
@@ -41,6 +41,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 # ─────────────────────────────────────────────
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:5000")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 FAST_MODEL  = "anthropic/claude-sonnet-4.6"
 POWER_MODEL = "anthropic/claude-opus-4.6"
@@ -296,23 +298,47 @@ ALL_TOOLS = [
 
 # ─────────────────────────────────────────────
 # Models  (lazy-initialised so import doesn't fail without key)
+#
+# Uses ChatOpenAI pointed at OpenRouter's OpenAI-compatible endpoint.
+# This avoids the langchain-openrouter <-> openrouter SDK version
+# mismatch (x_title vs x_open_router_title).
 # ─────────────────────────────────────────────
 
-_sonnet: ChatOpenRouter | None = None
-_opus: ChatOpenRouter | None = None
+_sonnet: ChatOpenAI | None = None
+_opus: ChatOpenAI | None = None
 
 
-def _get_sonnet() -> ChatOpenRouter:
+def _get_sonnet() -> ChatOpenAI:
     global _sonnet
     if _sonnet is None:
-        _sonnet = ChatOpenRouter(model=FAST_MODEL, temperature=0.1, max_tokens=4096)
+        _sonnet = ChatOpenAI(
+            model=FAST_MODEL,
+            temperature=0.1,
+            max_tokens=4096,
+            base_url=OPENROUTER_BASE_URL,
+            api_key=OPENROUTER_API_KEY,
+            default_headers={
+                "HTTP-Referer": os.getenv("OPENROUTER_APP_URL", ""),
+                "X-Title": os.getenv("OPENROUTER_APP_TITLE", "AnomalyAgent"),
+            },
+        )
     return _sonnet
 
 
-def _get_opus() -> ChatOpenRouter:
+def _get_opus() -> ChatOpenAI:
     global _opus
     if _opus is None:
-        _opus = ChatOpenRouter(model=POWER_MODEL, temperature=0.2, max_tokens=8192)
+        _opus = ChatOpenAI(
+            model=POWER_MODEL,
+            temperature=0.2,
+            max_tokens=8192,
+            base_url=OPENROUTER_BASE_URL,
+            api_key=OPENROUTER_API_KEY,
+            default_headers={
+                "HTTP-Referer": os.getenv("OPENROUTER_APP_URL", ""),
+                "X-Title": os.getenv("OPENROUTER_APP_TITLE", "AnomalyAgent"),
+            },
+        )
     return _opus
 
 
@@ -486,7 +512,7 @@ def stream_agent_response(
 
 
 # ─────────────────────────────────────────────
-# Standalone Interactive CLI  (unchanged)
+# Standalone Interactive CLI
 # ─────────────────────────────────────────────
 
 RESET  = "\033[0m"
