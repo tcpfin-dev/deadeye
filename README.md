@@ -6,6 +6,8 @@ Critical infrastructure and industrial systems — such as energy grids, water t
 
 Deadeye tackles this with a system of **ML inference clients** and an **LLM investigation agent** working in concert: inference clients continuously stream and classify sensor data across two industrial domains, while the investigation agent provides deep, explainable reasoning over the collected evidence — all surfaced through a live operational dashboard.
 
+# Currently in Prototype Phase
+
 ---
 
 ![alt text](image-1.png)
