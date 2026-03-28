@@ -326,6 +326,6 @@ The dashboard polls the API every 2 seconds and renders updates without page rel
 - **Records:** 15 datasets × 37 scenarios (Natural, No-event, Attack)
 - **Target:** Binary / three-class / multiclass attack detection
 - **Download:** [https://www.kaggle.com/datasets/bachirbarika/power-system/data](https://www.kaggle.com/datasets/bachirbarika/power-system/data)
-- Save as: `./power_data/data1.csv` … `data15.csv`
+- Save as: `./binaryAllNaturalPlusNormalVsAttacks/data1.csv` … `data15.csv`
 
 ---
