@@ -1,6 +1,6 @@
 # Deadeye
 
-### Deadeye is a multi-agent system for anomaly detection and predictive maintenance for Industrial control systems
+### Deadeye is a agentic system for anomaly detection and predictive maintenance for Industrial control systems
 
 Critical infrastructure and industrial systems — such as energy grids, water treatment plants, transportation networks, and manufacturing facilities — generate massive streams of operational and sensor data every second. Ensuring reliability, resilience, and security in these complex environments is challenging: traditional monitoring methods are largely reactive, addressing problems only after they occur, which can lead to costly downtime, safety risks, and operational inefficiencies.
 
